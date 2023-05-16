@@ -6,124 +6,172 @@ import (
 	"strings"
 )
 
-func ProcessHeal(line string) int {
+type Event struct {
+	Description string
+	Type string
+	Value int
+}
+
+type DamageTaken struct {
+	Total int
+	PerCreatureKind map[string]int
+	ByUnknownOriginTotal int
+}
+
+type Stats struct {
+	DamageHealed int
+	DamageTaken DamageTaken
+	ExperienceGained int
+	Loot map[string]map[string]int
+	BlackKnightTotalHealth int
+}
+
+func ProcessHeal(line string, stats Stats, eventLog []Event) (Stats, []Event) {
+
 	healRegex := regexp.MustCompile(`You healed yourself for (\d+) hitpoints\.`)
 
-	resultHeal := 0
-
-	if healRegex.MatchString(line) {
-		heal, _ := strconv.Atoi(healRegex.FindStringSubmatch(line)[1])
-		resultHeal = heal
+	if !healRegex.MatchString(line) {
+		return stats, eventLog
 	}
 
-	return resultHeal
+	heal, _ := strconv.Atoi(healRegex.FindStringSubmatch(line)[1])
+	var event = Event {
+		Description: line,
+		Type: "heal",
+		Value: heal,
+	}
+
+	stats.DamageHealed += heal
+	eventLog = append(eventLog, event)
+
+	return stats, eventLog
 }
 
-func ProcessDamage(line string) int {
+func ProcessDamage(line string, stats Stats, eventLog []Event) (Stats, []Event) {
+
 	damageRegex := regexp.MustCompile(`You lose (\d+) hitpoints.`)
 
-	resultDamage := 0
-
-	if damageRegex.MatchString(line) {
-		damage, _ := strconv.Atoi(damageRegex.FindStringSubmatch(line)[1])
-		resultDamage = damage
+	if !damageRegex.MatchString(line) {
+		return stats, eventLog
 	}
 
-	return resultDamage
-}
-
-func ProcessCreatureDamage(line string) (string, int) {
-	creatureDamageRegex := regexp.MustCompile(`You lose (\d+) hitpoints due to an attack by a (\w+)[.\s]`)
-
-	resultCreature := ""
-	resultDamage := 0
-
-	if creatureDamageRegex.MatchString(line) {
-		match := creatureDamageRegex.FindStringSubmatch(line)
-		damage, _ := strconv.Atoi(match[1])
-		creature := match[2]
-		resultCreature = creature
-		resultDamage = damage
+	damage, _ := strconv.Atoi(damageRegex.FindStringSubmatch(line)[1])
+	var event = Event {
+		Description: line,
+		Type: "damage",
+		Value: damage,
 	}
 
-	return resultCreature, resultDamage
+	stats.DamageTaken.Total += damage
+	eventLog = append(eventLog, event)
+	
+	return stats, eventLog
 }
 
-func ProcessExp(line string) int {
+func ProcessCreatureDamage(line string, stats Stats) Stats {
+
+	creatureDamageRegex := regexp.MustCompile(`You lose (\d+) hitpoints due to an attack by a (\w+\s*\w*)[.\s]`)
+
+	if !creatureDamageRegex.MatchString(line) {
+		return stats
+	}
+
+	match := creatureDamageRegex.FindStringSubmatch(line)
+	damage, _ := strconv.Atoi(match[1])
+	creature := match[2]
+
+	stats.DamageTaken.PerCreatureKind[creature] += damage
+
+	return stats
+}
+
+func ProcessExp(line string, stats Stats, eventLog []Event) (Stats, []Event) {
+
 	expRegex := regexp.MustCompile(`You gained (\d+) experience points\.`)
 
-	resultExp := 0
-
-	if expRegex.MatchString(line) {
-		exp, _ := strconv.Atoi(expRegex.FindStringSubmatch(line)[1])
-		resultExp = exp
+	if !expRegex.MatchString(line) {
+		return stats, eventLog
 	}
 
-	return resultExp
+	exp, _ := strconv.Atoi(expRegex.FindStringSubmatch(line)[1])
+	var event = Event {
+		Description: line,
+		Type: "experience",
+		Value: exp,
+	}
+
+	stats.ExperienceGained += exp
+	eventLog = append(eventLog, event)
+
+	return stats, eventLog
 }
 
-func ProcessLoot(line string) (string, map[string]int) {
+func ProcessLoot(line string, stats Stats) Stats {
+
 	lootRegex := regexp.MustCompile(`Loot of a (.*): (.*)\.`)
 	itemQuantityRegex := regexp.MustCompile(`(\d+) (\w+)`)
 
-	resultCreature := ""
-	resultItems := make(map[string]int)
+	if !lootRegex.MatchString(line) {
+		return stats
+	}
 
-	if lootRegex.MatchString(line) {
-		match := lootRegex.FindStringSubmatch(line)
+	match := lootRegex.FindStringSubmatch(line)
 
-		if len(match) == 0 {
-			return resultCreature, resultItems
-		}
+	if len(match) == 0 {
+		return stats
+	}
 
-		resultCreature = match[1]
-		itemsText := match[2]
+	lootItems := make(map[string]int)
+	creature := match[1]
+	itemsText := match[2]
 
-		for _, item := range strings.Split(itemsText, ", ") {
-			if item != "nothing" {
-				var itemName string
-				var itemQuantity int
-				
-				if submatch := itemQuantityRegex.FindStringSubmatch(item); len(submatch) > 0 {
-					itemName = submatch[2]
-					itemQuantity, _ = strconv.Atoi(submatch[1])
-				} else {
-					itemName = item[2:]
-					itemQuantity = 1
-				}
-
-				resultItems[itemName] += itemQuantity
+	for _, item := range strings.Split(itemsText, ", ") {
+		if item != "nothing" {
+			var itemName string
+			var itemQuantity int
+			
+			if submatch := itemQuantityRegex.FindStringSubmatch(item); len(submatch) > 0 {
+				itemName = submatch[2]
+				itemQuantity, _ = strconv.Atoi(submatch[1])
+			} else {
+				itemName = item[2:]
+				itemQuantity = 1
 			}
+
+			lootItems[itemName] += itemQuantity
 		}
 	}
 
-	return resultCreature, resultItems
+	stats.Loot[creature] = lootItems
 
+	return stats
 }
 
-func ProcessBlackKnightDamage(line string) int {
+func ProcessBlackKnightDamage(line string, stats Stats) Stats {
+
 	bkDamageRegex := regexp.MustCompile(`A Black Knight loses (\d+) hitpoints due to your attack\.`)
 
-	resultBkDamage := 0
+	if !bkDamageRegex.MatchString(line) {
+		return stats
+	}
 
-	if bkDamageRegex.MatchString(line) {
-			damage, _ := strconv.Atoi(bkDamageRegex.FindStringSubmatch(line)[1])
-			resultBkDamage = damage
-		}
+	damage, _ := strconv.Atoi(bkDamageRegex.FindStringSubmatch(line)[1])
+	stats.BlackKnightTotalHealth += damage
 
-	return resultBkDamage
+	return stats
 }
 
-func ProcessUnknownDamage(line string) int {
+func ProcessUnknownDamage(line string, stats Stats) Stats {
+
 	damageRegex := regexp.MustCompile(`You lose (\d+) hitpoints.`)
 	creatureDamageRegex := regexp.MustCompile(`You lose (\d+) hitpoints due to an attack by a (\w+)[\.\s]`)
 
-	resultUnkownDamage := 0
-
 	if damageRegex.MatchString(line) && !creatureDamageRegex.MatchString(line) {
 		damage, _ := strconv.Atoi(damageRegex.FindStringSubmatch(line)[1])
-		resultUnkownDamage = damage
+		stats.DamageTaken.ByUnknownOriginTotal += damage
+	
+		return stats
 	}
 
-	return resultUnkownDamage
+	return stats
 }
